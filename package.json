@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch --watch-path=src --watch-path=.env src/server.js"
+    "dev": "node --watch --watch-path=src --watch-path=.env src/server.js",
+    "seed:user": "node scripts/seed-user.js"
   },
   "engines": {
     "node": ">=18"

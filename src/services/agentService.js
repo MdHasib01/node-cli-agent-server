@@ -26,11 +26,28 @@ export async function listAgents() {
     requestsByCli(new Date(now - DAY_MS)),
   ]);
   const byCli = new Map(agents.map((agent) => [agent.cli, agent]));
-  return SUPPORTED_CLIS.map((cli) => ({
-    ...(byCli.get(cli)?.toJSON() ?? { cli, enabled: true, limits: {}, alertThreshold: 80, auth: { status: 'unknown' }, provider: null }),
-    ...getCliInfo(cli),
-    usage: { lastHour: lastHour[cli] ?? 0, lastDay: lastDay[cli] ?? 0, running: countActiveJobs(cli) },
-  }));
+  return SUPPORTED_CLIS.map((cli) => {
+    const agent = byCli.get(cli);
+    return {
+      ...(agent ? withTokenBudgets(agent.toJSON()) : { cli, enabled: true, limits: {}, alertThreshold: 80, auth: { status: 'unknown' }, provider: null }),
+      ...getCliInfo(cli),
+      usage: { lastHour: lastHour[cli] ?? 0, lastDay: lastDay[cli] ?? 0, running: countActiveJobs(cli) },
+    };
+  });
+}
+
+// Token budgets are settings, not measurements: apply the current ones so an edited
+// budget shows right away instead of after the next health check. Window keys match
+// the ones written by readClaudeUsage (agentProbes.js).
+function withTokenBudgets(agent) {
+  if (!agent.provider?.windows?.length) return agent;
+  const budgets = { '5h': agent.limits?.tokenBudget5h ?? null, '7d': agent.limits?.tokenBudget7d ?? null };
+  agent.provider.windows = agent.provider.windows.map((window) => {
+    if (window.unit !== 'tokens') return window;
+    const limit = budgets[window.key] ?? null;
+    return { ...window, limit, usedPercent: limit ? Math.min((window.used / limit) * 100, 100) : null };
+  });
+  return agent;
 }
 
 export async function getAgent(cli) {
@@ -58,6 +75,10 @@ export async function probeAgent(cli) {
   // CLIs without a status command keep the state inferred from their last requests (see observeJob).
 
   const provider = await readProviderUsage(cli, previous);
+
+  // Sign-in state first: a check that reads as finished (lastCheckedAt) never shows a stale state.
+  if (auth) await setAuthStatus(cli, { ...auth, source: 'probe' });
+
   const now = new Date();
   await Agent.updateOne(
     { cli },
@@ -85,7 +106,6 @@ export async function probeAgent(cli) {
       dedupeMs: 6 * HOUR_MS,
     });
   }
-  if (auth) await setAuthStatus(cli, { ...auth, source: 'probe' });
   await raiseProviderAlerts(cli, info.label, provider, previous?.alertThreshold ?? 80);
 
   broadcast('agents', { cli });

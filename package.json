@@ -1,0 +1,21 @@
+{
+  "name": "node-cli-agent-server",
+  "version": "1.0.0",
+  "description": "REST API that wraps AI CLI tools (claude, agy, codex) with dynamic CLI and model selection",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch --watch-path=src --watch-path=.env src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-cron": "^4.6.0",
+    "uuid": "^14.0.2"
+  }
+}

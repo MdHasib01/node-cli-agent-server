@@ -36,6 +36,7 @@ export function runCommand({ command, args, cwd, timeoutMs = config.cliTimeout, 
       const ok = !error && !timedOut && exitCode === 0;
       resolve({
         ok,
+        notFound: error?.code === 'ENOENT',
         exitCode,
         stdout,
         stderr,

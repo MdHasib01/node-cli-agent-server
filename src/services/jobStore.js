@@ -6,10 +6,12 @@ const jobs = new Map();
 // Cumulative per-CLI counters; kept separately so pruning old jobs doesn't lose them.
 const stats = {};
 
-export function createJob({ cli, model, type, prompt }) {
+export function createJob({ cli, model, type, prompt, ownerId = null }) {
   const job = {
     id: uuidv4(),
     status: 'queued',
+    // Id of the user whose token/session created the job; null for the legacy API_KEY.
+    ownerId,
     cli,
     model,
     type,
@@ -51,6 +53,15 @@ export function finishJob(id, patch) {
   cliStats.totalDurationMs += job.durationMs ?? 0;
   cliStats.lastUsedAt = job.finishedAt;
   return job;
+}
+
+/** Jobs of a CLI that are queued or running right now. */
+export function countActiveJobs(cli) {
+  let count = 0;
+  for (const job of jobs.values()) {
+    if (job.cli === cli && !job.finishedAt) count += 1;
+  }
+  return count;
 }
 
 export function getStats(cli) {

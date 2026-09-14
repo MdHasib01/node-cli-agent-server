@@ -13,11 +13,16 @@ export function listClis(req, res) {
   });
 }
 
-// GET /api/jobs/:id
+// GET /api/jobs/:id — users only see their own jobs; admins and the legacy API_KEY see all.
 export function getJobById(req, res) {
   const job = getJob(req.params.id);
-  if (!job) throw new HttpError(404, 'Job not found');
+  if (!job || !canViewJob(job, req.auth)) throw new HttpError(404, 'Job not found');
   res.json(job);
+}
+
+function canViewJob(job, auth) {
+  if (auth.source === 'api_key' || auth.user?.role === 'admin') return true;
+  return job.ownerId === String(auth.user?._id);
 }
 
 // GET /api/usage

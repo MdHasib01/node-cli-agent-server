@@ -9,6 +9,11 @@
 const CLIS = {
   claude: {
     command: 'claude',
+    label: 'Claude Code',
+    vendor: 'Anthropic',
+    // Reports the signed-in account and exits non-zero when logged out.
+    authArgs: ['auth', 'status'],
+    loginCommand: 'claude auth login',
     // -p = non-interactive. acceptEdits auto-approves file writes inside the job's
     // output directory; other tools (e.g. Bash) are denied rather than prompted for.
     buildArgs: ({ type, model, prompt, outputDir }) => [
@@ -23,6 +28,11 @@ const CLIS = {
 
   agy: {
     command: 'agy',
+    label: 'Antigravity',
+    vendor: 'Google',
+    // No headless sign-in status command: the state is inferred from request results.
+    authArgs: null,
+    loginCommand: 'agy (then sign in when prompted)',
     // agy uses Go-style flags: the prompt is the value of --print and must come last.
     // Headless agy auto-denies anything it would normally ask about, so every tool
     // permission is granted up front. agy picks its own workspace root (it can be a
@@ -38,6 +48,11 @@ const CLIS = {
 
   codex: {
     command: 'codex',
+    label: 'Codex',
+    vendor: 'OpenAI',
+    // Prints "Logged in using ..." or "Not logged in".
+    authArgs: ['login', 'status'],
+    loginCommand: 'codex login',
     // exec = non-interactive. --full-auto auto-approves inside codex's workspace sandbox.
     buildArgs: ({ type, model, prompt, outputDir }) => [
       'exec',
@@ -65,6 +80,24 @@ export function buildCommand({ cli, type, model, prompt, outputDir }) {
 export function buildUsageCommand(cli) {
   const entry = CLIS[cli];
   return { command: entry.command, args: [...entry.usageArgs] };
+}
+
+/** The CLI's sign-in status command, or null when it has none. */
+export function buildAuthCommand(cli) {
+  const entry = CLIS[cli];
+  return entry.authArgs ? { command: entry.command, args: [...entry.authArgs] } : null;
+}
+
+/** Display metadata for the dashboard. */
+export function getCliInfo(cli) {
+  const entry = CLIS[cli];
+  return {
+    cli,
+    label: entry.label,
+    vendor: entry.vendor,
+    loginCommand: entry.loginCommand,
+    hasAuthProbe: Boolean(entry.authArgs),
+  };
 }
 
 function modelArgs(model) {

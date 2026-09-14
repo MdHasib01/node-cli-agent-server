@@ -1,7 +1,9 @@
 import { config } from '../config.js';
+import { checkRequestLimitAlerts, enforceLimits, observeJob } from '../services/agentService.js';
 import { SUPPORTED_CLIS, SUPPORTED_TYPES, isSupportedCli } from '../services/cliMapper.js';
 import { runJob } from '../services/cliRunner.js';
 import { createJob } from '../services/jobStore.js';
+import { checkTokenQuota, finishUsage, startUsage } from '../services/usageService.js';
 import { HttpError } from '../utils/httpError.js';
 import { sanitizeModel, sanitizePrompt } from '../utils/sanitizer.js';
 
@@ -29,15 +31,20 @@ export async function generate(req, res) {
   const model = resolveModel(body.model);
   const prompt = sanitizePrompt(body.prompt);
 
-  const job = createJob({ cli, model, type, prompt });
+  await enforceLimits({ cli, auth: req.auth });
+
+  const job = createJob({ cli, model, type, prompt, ownerId: req.auth.user ? String(req.auth.user._id) : null });
+  const usage = await startUsage(job, req.auth);
+  raiseLimitAlerts(cli, req.auth.token);
+
+  const run = runJob(job).then((finished) => afterJob(finished, usage));
 
   if (body.async === true) {
-    runJob(job);
     res.status(202).json({ jobId: job.id, status: job.status, statusUrl: `/api/jobs/${job.id}` });
     return;
   }
 
-  const finished = await runJob(job);
+  const finished = await run;
   res.status(STATUS_CODES[finished.status] ?? 500).json(finished);
 }
 
@@ -48,4 +55,21 @@ function resolveModel(requested) {
   }
   const model = requested?.trim() || config.defaultModel;
   return model === 'default' ? null : sanitizeModel(model);
+}
+
+// Usage bookkeeping and sign-in detection must never fail the request itself.
+async function afterJob(job, usage) {
+  try {
+    await finishUsage(usage, job);
+    await observeJob(job);
+  } catch (error) {
+    console.error(`[job ${job.id}] usage bookkeeping failed`, error);
+  }
+  return job;
+}
+
+function raiseLimitAlerts(cli, token) {
+  Promise.all([checkRequestLimitAlerts(cli), checkTokenQuota(token)]).catch((error) =>
+    console.error('[usage] limit alert check failed', error),
+  );
 }

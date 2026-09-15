@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, rmdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { copyFile, mkdir, readdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { buildCommand } from './cliMapper.js';
@@ -149,6 +150,7 @@ export async function runJob(job, inputs = {}) {
     updateJob(job.id, { status: 'running', startedAt: new Date().toISOString() });
     console.log(`${tag} ${job.cli} (${job.model ?? 'default model'}) ${job.type}: started`);
 
+    const startedAtMs = Date.now();
     const result = await runCommand({
       command,
       args,
@@ -156,8 +158,21 @@ export async function runJob(job, inputs = {}) {
       cwd: outputDir,
       onOutput: (chunk) => logLines(tag, chunk),
     });
-    const files = await collectOutputFiles(job.id, outputDir);
-    const imageFile = findImageFile(files);
+    let files = await collectOutputFiles(job.id, outputDir);
+    // An agent told to "save an image here" sometimes just copies the
+    // reference it was given. That is never the generated result.
+    files = await dropInputCopies(files, images, tag);
+    let imageFile = findImageFile(files);
+
+    // Codex renders into its own home and copies the file in afterwards; if
+    // that copy never happened, the image still exists - go and fetch it.
+    if (job.type === 'image' && !imageFile) {
+      const rescued = await rescueGeneratedImage(job, outputDir, startedAtMs, tag);
+      if (rescued) {
+        files = await dropInputCopies(await collectOutputFiles(job.id, outputDir), images, tag);
+        imageFile = findImageFile(files);
+      }
+    }
     let status = result.ok ? 'succeeded' : result.timedOut ? 'timed_out' : 'failed';
     let error = result.error;
 
@@ -172,7 +187,9 @@ export async function runJob(job, inputs = {}) {
 
     // Some CLIs exit 0 even when a denied tool call meant nothing was written.
     if (status === 'succeeded' && job.type === 'image' && !imageFile) {
-      const detail = (result.stderr.trim() || result.stdout.trim()).slice(-2000);
+      // stdout is the agent's final reply (e.g. why it declined); Codex's
+      // stderr is its whole transcript, prompt included.
+      const detail = (result.stdout.trim() || result.stderr.trim()).slice(-2000);
       status = 'failed';
       error = `The CLI finished without producing an image file${detail ? `: ${detail}` : ''}`;
     }
@@ -204,6 +221,93 @@ export async function runJob(job, inputs = {}) {
 
 function findImageFile(files) {
   return files.find((file) => /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name));
+}
+
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
+
+const md5 = async (file) => createHash('md5').update(await readFile(file)).digest('hex');
+
+/**
+ * Drop output files that are byte-identical to one of the reference images.
+ * Returning a reference as the generated image looks like success and is the
+ * one failure a caller cannot spot from the API response.
+ */
+export async function dropInputCopies(files, images = [], tag = '') {
+  if (!images.length || !files.length) return files;
+
+  const bySize = new Map();
+  for (const image of images) {
+    if (!bySize.has(image.size)) bySize.set(image.size, []);
+    bySize.get(image.size).push(image);
+  }
+
+  const kept = [];
+  for (const file of files) {
+    const candidates = bySize.get(file.size);
+    if (!candidates) {
+      kept.push(file);
+      continue;
+    }
+    const hash = await md5(file.path).catch(() => null);
+    let copied = null;
+    for (const image of candidates) {
+      image.hash ??= await md5(image.path).catch(() => null);
+      if (hash && image.hash === hash) {
+        copied = image;
+        break;
+      }
+    }
+    if (copied) console.warn(`${tag} ignoring ${file.name}: it is a copy of reference image "${copied.label}"`);
+    else kept.push(file);
+  }
+  return kept;
+}
+
+/** Where each CLI parks images its own image tool produced. */
+const GENERATED_IMAGE_DIRS = {
+  codex: () => path.join(config.codexHome, 'generated_images'),
+};
+
+/**
+ * Last resort for an image job that produced no file: look in the CLI's own
+ * image output folder for something it made during this run and bring it into
+ * the job directory. A generation that already cost time and quota should not
+ * be thrown away because the agent forgot the final copy step.
+ */
+export async function rescueGeneratedImage(job, outputDir, sinceMs, tag) {
+  const directory = GENERATED_IMAGE_DIRS[job.cli]?.();
+  if (!directory) return null;
+
+  let newest = null;
+  const visit = async (current) => {
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const absolutePath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() || !IMAGE_FILE.test(entry.name)) continue;
+      const info = await stat(absolutePath).catch(() => null);
+      // Only files this run produced - never an image from an earlier job.
+      if (!info || info.mtimeMs < sinceMs || !info.size) continue;
+      if (!newest || info.mtimeMs > newest.mtimeMs) newest = { path: absolutePath, mtimeMs: info.mtimeMs };
+    }
+  };
+  await visit(directory);
+  if (!newest) return null;
+
+  const name = `generated-${Date.now()}${path.extname(newest.path).toLowerCase()}`;
+  try {
+    // collectOutputFiles removes the directory when a run left nothing behind.
+    await mkdir(outputDir, { recursive: true });
+    await copyFile(newest.path, path.join(outputDir, name));
+  } catch (error) {
+    console.error(`${tag} could not recover ${newest.path}: ${error.message}`);
+    return null;
+  }
+  console.warn(`${tag} recovered generated image the CLI left in ${path.dirname(newest.path)}`);
+  return name;
 }
 
 export function killAllRunning() {

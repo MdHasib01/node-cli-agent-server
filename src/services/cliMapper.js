@@ -165,6 +165,12 @@ function withTask(type, prompt, outputDir, { images = [], context = '', attached
       const role = image.role ? `(${image.role}) ` : '';
       lead.push(`${image.index}. ${where}${role}${image.label}`);
     }
+    if (type === 'image') {
+      // Handed a product photo, an image model will otherwise return that photo.
+      lead.push(
+        'They show what each subject looks like. They are not the output: never return, copy or re-crop one of them. Put the subjects and products they show into the new image you create.',
+      );
+    }
     lead.push('');
   }
 
@@ -172,8 +178,12 @@ function withTask(type, prompt, outputDir, { images = [], context = '', attached
     type !== 'image'
       ? prompt
       : [
-          'Create an image based on the description below.',
+          'Create one new image based on the description below.',
+          ...(images.length
+            ? ['The description is the scene to build; the reference images are the subjects and props to place inside it.']
+            : []),
           `Save it as an image file (PNG, JPG or SVG) in this directory: ${outputDir}`,
+          'If your image tool writes the file somewhere else (its own output folder), copy it into that directory before you finish.',
           `Save only the new image there - not inside the ${INPUTS_DIR} folder, and do not copy the reference images.`,
           'If you cannot run shell commands, write SVG markup directly into a .svg file there using your file-writing tool.',
           'Then reply with the file name only.',

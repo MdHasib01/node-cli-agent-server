@@ -22,7 +22,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 export const config = {
   port: positiveInt('PORT', 6000),
-  defaultCli: process.env.DEFAULT_CLI?.trim() || 'agy',
+  defaultCli: process.env.DEFAULT_CLI?.trim() || 'codex',
   defaultModel: process.env.DEFAULT_MODEL?.trim() || 'default',
   cliTimeout: positiveInt('CLI_TIMEOUT', 60000),
   apiKey: process.env.API_KEY?.trim() || '',

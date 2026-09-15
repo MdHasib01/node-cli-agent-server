@@ -1,6 +1,7 @@
 import { realpath, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
+import { INPUTS_DIR } from '../services/jobInputs.js';
 import { HttpError } from '../utils/httpError.js';
 import { outputsUrl, publicOutputsUrl, resolveBaseUrl } from '../utils/url.js';
 
@@ -84,6 +85,9 @@ async function scanImages(root) {
     await Promise.all(
       entries.map(async (entry) => {
         if (entry.name.startsWith('.')) return;
+        // Reference images a caller sent in are inputs, not generated assets:
+        // listing them makes a job look like it "generated" its own reference.
+        if (entry.isDirectory() && entry.name === INPUTS_DIR) return;
         const relativePath = path.join(relativeDirectory, entry.name);
         const absolutePath = path.join(directory, entry.name);
         if (entry.isDirectory()) {

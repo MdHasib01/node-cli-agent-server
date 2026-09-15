@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deleteAsset, listAssets } from '../controllers/assetController.js';
 import { checkAgent, checkAllAgents, getAgents, patchAgent } from '../controllers/agentController.js';
 import { getCronJobs, getCronRuns, patchCronJob, runCronJob } from '../controllers/cronController.js';
 import { listNotifications, markAllRead, markRead, stream } from '../controllers/notificationController.js';
@@ -10,7 +11,7 @@ import { requireAdmin, requireSession } from '../middleware/auth.js';
 /** Routes used by the dashboard (session cookie). Mounted at /api before the CLI API router. */
 const router = Router();
 
-router.use(['/tokens', '/agents', '/notifications', '/stats', '/users', '/cron'], requireSession);
+router.use(['/tokens', '/agents', '/assets', '/notifications', '/stats', '/users', '/cron'], requireSession);
 router.use(['/users', '/cron'], requireAdmin);
 
 router.get('/tokens', listTokens);
@@ -24,6 +25,9 @@ router.get('/agents', getAgents);
 router.post('/agents/check', checkAllAgents);
 router.post('/agents/:cli/check', checkAgent);
 router.patch('/agents/:cli', requireAdmin, patchAgent);
+
+router.get('/assets', listAssets);
+router.delete('/assets/:id', deleteAsset);
 
 router.get('/notifications', listNotifications);
 router.get('/notifications/stream', stream);

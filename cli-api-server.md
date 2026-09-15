@@ -52,7 +52,7 @@ server/
 
 ## 🔐 Environment Variables
 
-PORT=3000  
+PORT=6000  
 DEFAULT_CLI=agy  
 DEFAULT_MODEL=default-model  
 CLI_TIMEOUT=60000  

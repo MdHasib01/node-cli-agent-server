@@ -21,11 +21,12 @@ function flag(name, fallback) {
 const isProduction = process.env.NODE_ENV === 'production';
 
 export const config = {
-  port: positiveInt('PORT', 3000),
+  port: positiveInt('PORT', 6000),
   defaultCli: process.env.DEFAULT_CLI?.trim() || 'agy',
   defaultModel: process.env.DEFAULT_MODEL?.trim() || 'default',
   cliTimeout: positiveInt('CLI_TIMEOUT', 60000),
   apiKey: process.env.API_KEY?.trim() || '',
+  baseUrl: process.env.BASE_URL?.trim().replace(/\/+$/, '') || '',
   outputsDir: path.join(ROOT_DIR, 'outputs'),
 
   mongoUri: process.env.MONGODB_URI?.trim() || '',

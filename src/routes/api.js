@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { generate } from '../controllers/generateController.js';
+import { listModels } from '../controllers/modelController.js';
 import { getJobById, listClis, usage } from '../controllers/statusController.js';
 
 const router = Router();
 
 router.get('/clis', listClis);
+router.get('/models/:cli', listModels);
 router.post('/generate', generate);
 router.get('/jobs/:id', getJobById);
 router.get('/usage', usage);

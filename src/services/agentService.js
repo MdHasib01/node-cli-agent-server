@@ -86,6 +86,7 @@ export async function probeAgent(cli) {
       $set: {
         installed,
         version: version.ok ? firstLine(version.stdout) : null,
+        binaryPath: version.location ?? null,
         provider: { ...provider, checkedAt: now },
         lastCheckedAt: now,
         lastError: version.ok ? null : version.error,
@@ -155,6 +156,9 @@ export async function setAuthStatus(cli, { status, method = null, detail = null,
       title: `${label} is signed in again`,
       message: `"${cli}" can accept requests again.`,
       meta: { cli },
+      // Caps noise if the probe and request results ever disagree and the state flips back and forth.
+      dedupeKey: `auth:${cli}:signed-in`,
+      dedupeMs: 30 * 60 * 1000,
     });
   }
   broadcast('agents', { cli });

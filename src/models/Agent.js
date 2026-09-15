@@ -62,6 +62,8 @@ const agentSchema = new mongoose.Schema(
     alertThreshold: { type: Number, default: 80, min: 1, max: 100 },
     installed: { type: Boolean, default: null },
     version: { type: String, default: null },
+    // Where the executable was found (or the npm shim that launches it).
+    binaryPath: { type: String, default: null },
     auth: { type: authSchema, default: () => ({}) },
     provider: { type: providerSchema, default: null },
     lastCheckedAt: { type: Date, default: null },

@@ -3,15 +3,19 @@ import { checkRequestLimitAlerts, enforceLimits, observeJob } from '../services/
 import { SUPPORTED_CLIS, SUPPORTED_TYPES, isSupportedCli } from '../services/cliMapper.js';
 import { runJob } from '../services/cliRunner.js';
 import { createJob } from '../services/jobStore.js';
+import { describeInputs, parseInputs } from '../services/jobInputs.js';
 import { checkTokenQuota, finishUsage, startUsage } from '../services/usageService.js';
 import { HttpError } from '../utils/httpError.js';
 import { sanitizeModel, sanitizePrompt } from '../utils/sanitizer.js';
+import { ensureAbsoluteJobUrls, resolveBaseUrl } from '../utils/url.js';
 
 const STATUS_CODES = { succeeded: 200, failed: 502, timed_out: 504 };
 
 /**
  * POST /api/generate
- * Body: { cli?, model?, type?, prompt, async? }
+ * Body: { cli?, model?, type?, prompt, async?, context?, images? }
+ *   context: standing instructions (e.g. a brand brief), delivered per CLI
+ *   images:  [{ url | data, label?, role?, mimeType? }] reference images
  * Waits for the CLI and returns the finished job, or with `async: true`
  * returns 202 immediately and the job can be polled at /api/jobs/:id.
  */
@@ -30,22 +34,27 @@ export async function generate(req, res) {
 
   const model = resolveModel(body.model);
   const prompt = sanitizePrompt(body.prompt);
+  const inputs = parseInputs(body, prompt);
 
   await enforceLimits({ cli, auth: req.auth });
 
   const job = createJob({ cli, model, type, prompt, ownerId: req.auth.user ? String(req.auth.user._id) : null });
+  // Summary only - the job record is returned by the API, the image bytes are not.
+  Object.assign(job, describeInputs(inputs));
   const usage = await startUsage(job, req.auth);
   raiseLimitAlerts(cli, req.auth.token);
 
-  const run = runJob(job).then((finished) => afterJob(finished, usage));
+  const baseUrl = resolveBaseUrl(req);
+  const run = runJob(job, inputs).then((finished) => afterJob(ensureAbsoluteJobUrls(finished, baseUrl), usage));
 
   if (body.async === true) {
-    res.status(202).json({ jobId: job.id, status: job.status, statusUrl: `/api/jobs/${job.id}` });
+    const statusUrl = `${baseUrl}/api/jobs/${job.id}`;
+    res.status(202).json({ jobId: job.id, status: job.status, statusUrl });
     return;
   }
 
   const finished = await run;
-  res.status(STATUS_CODES[finished.status] ?? 500).json(finished);
+  res.status(STATUS_CODES[finished.status] ?? 500).json(ensureAbsoluteJobUrls(finished, baseUrl));
 }
 
 // null means "no --model flag": the CLI falls back to its own default model.

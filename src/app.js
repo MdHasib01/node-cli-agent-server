@@ -26,7 +26,11 @@ app.use('/api', requireApiAccess, apiRouter);
 
 app.use(
   '/outputs',
-  requireApiAccess,
+  (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
   express.static(config.outputsDir, {
     index: false,
     dotfiles: 'deny',
@@ -34,6 +38,8 @@ app.use(
     setHeaders: (res) => {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
   }),
 );

@@ -1,6 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 
 const MAX_JOBS = 1000;
+// Live CLI transcript kept per job, so API clients can show progress while it runs.
+const MAX_LOG_LINES = 400;
+const MAX_LOG_LINE_CHARS = 500;
 
 const jobs = new Map();
 // Cumulative per-CLI counters; kept separately so pruning old jobs doesn't lose them.
@@ -25,6 +28,10 @@ export function createJob({ cli, model, type, prompt, ownerId = null }) {
     outputTruncated: false,
     files: [],
     error: null,
+    // Rolling tail of the CLI transcript: { seq, time, text }. `logSeq` counts every
+    // line ever appended, so a poller can ask for just the lines after its last seq.
+    log: [],
+    logSeq: 0,
   };
   jobs.set(job.id, job);
   prune();
@@ -39,6 +46,24 @@ export function updateJob(id, patch) {
   const job = jobs.get(id);
   if (job) Object.assign(job, patch);
   return job ?? null;
+}
+
+/** Append transcript lines to a job, keeping only the newest MAX_LOG_LINES. */
+export function appendJobLog(id, lines) {
+  const job = jobs.get(id);
+  if (!job) return;
+  const time = new Date().toISOString();
+  for (const line of lines) {
+    const text = String(line).replace(/\s+$/, '');
+    if (!text.trim()) continue;
+    job.logSeq += 1;
+    job.log.push({
+      seq: job.logSeq,
+      time,
+      text: text.length > MAX_LOG_LINE_CHARS ? `${text.slice(0, MAX_LOG_LINE_CHARS)}…` : text,
+    });
+  }
+  if (job.log.length > MAX_LOG_LINES) job.log.splice(0, job.log.length - MAX_LOG_LINES);
 }
 
 export function finishJob(id, patch) {

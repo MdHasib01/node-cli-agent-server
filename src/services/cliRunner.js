@@ -6,7 +6,7 @@ import { config } from '../config.js';
 import { buildCommand } from './cliMapper.js';
 import { INPUTS_DIR, saveInputImages } from './jobInputs.js';
 import { childEnv, forgetCommand, resolveCommand } from './cliResolver.js';
-import { finishJob, updateJob } from './jobStore.js';
+import { appendJobLog, finishJob, updateJob } from './jobStore.js';
 import { outputsUrl } from '../utils/url.js';
 
 const MAX_OUTPUT_CHARS = 5_000_000;
@@ -17,7 +17,7 @@ const runningChildren = new Set();
 /**
  * Runs a command with spawn() (never a shell). Never rejects: spawn errors,
  * non-zero exits and timeouts are all reported in the resolved result.
- * `onOutput` receives stdout/stderr chunks as they arrive.
+ * `onOutput(chunk, stream)` receives stdout/stderr chunks as they arrive.
  * `binEnv` names the environment variable that may hold an explicit path to the executable.
  */
 export async function runCommand({ command, args, cwd, timeoutMs = config.cliTimeout, onOutput, binEnv }) {
@@ -110,11 +110,11 @@ export async function runCommand({ command, args, cwd, timeoutMs = config.cliTim
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       stdout = append(stdout, chunk);
-      onOutput?.(chunk);
+      onOutput?.(chunk, 'stdout');
     });
     child.stderr.on('data', (chunk) => {
       stderr = append(stderr, chunk);
-      onOutput?.(chunk);
+      onOutput?.(chunk, 'stderr');
     });
 
     child.on('error', (error) => finish({ error }));
@@ -129,6 +129,7 @@ export async function runCommand({ command, args, cwd, timeoutMs = config.cliTim
 export async function runJob(job, inputs = {}) {
   const outputDir = path.join(config.outputsDir, job.id);
   const tag = `[job ${job.id}]`;
+  const log = (...lines) => appendJobLog(job.id, lines);
   try {
     await mkdir(outputDir, { recursive: true });
 
@@ -139,16 +140,20 @@ export async function runJob(job, inputs = {}) {
       images = await saveInputImages(inputs.images ?? [], outputDir);
     } catch (error) {
       console.error(`${tag} ${error.message}`);
+      log(`✗ ${error.message}`);
       return finishJob(job.id, { status: 'failed', error: error.message });
     }
     if (images.length || inputs.context) {
       console.log(`${tag} inputs: ${images.length} reference image(s), ${inputs.context?.length ?? 0} chars of context`);
+      log(`▸ inputs: ${images.length} reference image(s), ${inputs.context?.length ?? 0} chars of context`);
     }
 
     const { command, args, binEnv } = buildCommand({ ...job, outputDir, images, context: inputs.context ?? '' });
 
     updateJob(job.id, { status: 'running', startedAt: new Date().toISOString() });
     console.log(`${tag} ${job.cli} (${job.model ?? 'default model'}) ${job.type}: started`);
+    log(`▸ ${job.cli} (${job.model ?? 'default model'}) ${job.type}: started`);
+    const lines = { stdout: lineSplitter(), stderr: lineSplitter() };
 
     const startedAtMs = Date.now();
     const result = await runCommand({
@@ -156,8 +161,12 @@ export async function runJob(job, inputs = {}) {
       args,
       binEnv,
       cwd: outputDir,
-      onOutput: (chunk) => logLines(tag, chunk),
+      onOutput: (chunk, stream) => {
+        logLines(tag, chunk);
+        appendJobLog(job.id, lines[stream].push(chunk));
+      },
     });
+    appendJobLog(job.id, [...lines.stdout.flush(), ...lines.stderr.flush()]);
     let files = await collectOutputFiles(job.id, outputDir);
     // An agent told to "save an image here" sometimes just copies the
     // reference it was given. That is never the generated result.
@@ -203,6 +212,11 @@ export async function runJob(job, inputs = {}) {
     }
 
     console.log(`${tag} ${status} in ${result.durationMs} ms${error ? `: ${error}` : ''}`);
+    log(
+      status === 'succeeded'
+        ? `✓ ${status} in ${(result.durationMs / 1000).toFixed(1)}s${imageFile ? ` · ${imageFile.name}` : ''}`
+        : `✗ ${status}${error ? `: ${error.split('\n')[0]}` : ''}`,
+    );
     return finishJob(job.id, {
       status,
       exitCode: result.exitCode,
@@ -215,6 +229,7 @@ export async function runJob(job, inputs = {}) {
     });
   } catch (error) {
     console.error(`${tag} internal error`, error);
+    log('✗ internal error while running the CLI');
     return finishJob(job.id, { status: 'failed', error: 'Internal error while running the CLI' });
   }
 }
@@ -312,6 +327,23 @@ export async function rescueGeneratedImage(job, outputDir, sinceMs, tag) {
 
 export function killAllRunning() {
   for (const child of runningChildren) killProcessTree(child, 'SIGTERM');
+}
+
+// Buffers a stream's chunks into whole lines; push() returns the lines completed so far.
+function lineSplitter() {
+  let pending = '';
+  return {
+    push(chunk) {
+      const parts = (pending + chunk).split(/\r?\n/);
+      pending = parts.pop();
+      return parts;
+    },
+    flush() {
+      const rest = pending;
+      pending = '';
+      return rest ? [rest] : [];
+    },
+  };
 }
 
 // Streams CLI output to the server console as it arrives, one prefixed line at a time.

@@ -28,7 +28,7 @@ export async function listClis(req, res) {
     // Lets clients size prompts before sending instead of guessing.
     limits: { maxPromptChars: MAX_PROMPT_LENGTH, maxImages: MAX_IMAGES },
     // Optional POST /api/generate fields this server understands.
-    features: ['images', 'context'],
+    features: ['images', 'context', 'log'],
     defaults: {
       cli: usable.includes(config.defaultCli) ? config.defaultCli : (usable[0] ?? null),
       model: config.defaultModel,
@@ -50,7 +50,11 @@ export async function listClis(req, res) {
 export function getJobById(req, res) {
   const job = getJob(req.params.id);
   if (!job || !canViewJob(job, req.auth)) throw new HttpError(404, 'Job not found');
-  res.json(ensureAbsoluteJobUrls(job, resolveBaseUrl(req)));
+  const body = ensureAbsoluteJobUrls(job, resolveBaseUrl(req));
+  // ?logSince=<seq> returns only the transcript lines a poller has not seen yet.
+  const since = Number(req.query.logSince);
+  if (Number.isFinite(since) && since >= 0) body.log = (job.log ?? []).filter((line) => line.seq > since);
+  res.json(body);
 }
 
 function canViewJob(job, auth) {
